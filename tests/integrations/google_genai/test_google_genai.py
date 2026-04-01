@@ -525,6 +525,11 @@ def test_streaming_generate_content(sentry_init, capture_events, mock_genai_clie
     # Verify model name
     assert chat_span["data"][SPANDATA.GEN_AI_REQUEST_MODEL] == "gemini-1.5-flash"
 
+    # Verify that response_id and model_version are captured from streaming chunks
+    # (chunk1 carries responseId and modelVersion; these were previously lost)
+    assert chat_span["data"][SPANDATA.GEN_AI_RESPONSE_ID] == "response-id-stream-123"
+    assert chat_span["data"][SPANDATA.GEN_AI_RESPONSE_MODEL] == "gemini-1.5-flash"
+
 
 def test_span_origin(sentry_init, capture_events, mock_genai_client):
     sentry_init(
@@ -2107,3 +2112,91 @@ def test_extract_contents_messages_object_with_text_attribute():
     assert len(result) == 1
     assert result[0]["role"] == "user"
     assert result[0]["content"] == [{"text": "Object text", "type": "text"}]
+
+
+def test_accumulate_streaming_response_captures_response_id_and_model():
+    """
+    Regression test for https://github.com/getsentry/sentry-python/issues/5812
+
+    ``accumulate_streaming_response()`` must extract ``response_id`` and
+    ``model_version`` from streaming chunks so that the span attributes
+    ``gen_ai.response.id`` and ``gen_ai.response.model`` are populated, just
+    like the non-streaming path does.
+    """
+    from sentry_sdk.integrations.google_genai.streaming import (
+        accumulate_streaming_response,
+    )
+
+    class _FakeChunk:
+        """Minimal stand-in for ``google.genai.types.GenerateContentResponse``."""
+
+        def __init__(self, response_id=None, model_version=None, text=None):
+            self.response_id = response_id
+            self.model_version = model_version
+            self.candidates = []
+            if text:
+                # Build a minimal candidate/content structure
+                part = type("Part", (), {"text": text})()
+                content = type("Content", (), {"parts": [part], "role": "model"})()
+                candidate = type("Candidate", (), {"content": content, "finish_reason": None})()
+                self.candidates = [candidate]
+            self.usage_metadata = None
+
+    # Chunk 1 carries the id and model_version; subsequent chunks do not.
+    chunk1 = _FakeChunk(response_id="stream-resp-001", model_version="gemini-1.5-pro", text="Hello ")
+    chunk2 = _FakeChunk(text="world")
+
+    result = accumulate_streaming_response([chunk1, chunk2])
+
+    assert result["id"] == "stream-resp-001", (
+        "response_id from the first chunk must be captured in the accumulated response"
+    )
+    assert result["model"] == "gemini-1.5-pro", (
+        "model_version from the first chunk must be captured in the accumulated response"
+    )
+
+
+def test_accumulate_streaming_response_response_id_from_later_chunk():
+    """
+    If the first chunk has no ``response_id``, the first subsequent chunk that
+    does should supply it (e.g. some providers only include the id in the final
+    chunk).
+    """
+    from sentry_sdk.integrations.google_genai.streaming import (
+        accumulate_streaming_response,
+    )
+
+    class _FakeChunk:
+        def __init__(self, response_id=None, model_version=None):
+            self.response_id = response_id
+            self.model_version = model_version
+            self.candidates = []
+            self.usage_metadata = None
+
+    chunk1 = _FakeChunk()  # no id
+    chunk2 = _FakeChunk(response_id="late-id-002", model_version="gemini-1.5-flash")
+
+    result = accumulate_streaming_response([chunk1, chunk2])
+
+    assert result["id"] == "late-id-002"
+    assert result["model"] == "gemini-1.5-flash"
+
+
+def test_accumulate_streaming_response_missing_response_id_and_model():
+    """
+    If no chunk carries ``response_id`` or ``model_version``, the fields must
+    remain ``None`` — no ``AttributeError`` should be raised.
+    """
+    from sentry_sdk.integrations.google_genai.streaming import (
+        accumulate_streaming_response,
+    )
+
+    class _FakeChunk:
+        def __init__(self):
+            self.candidates = []
+            self.usage_metadata = None
+
+    result = accumulate_streaming_response([_FakeChunk(), _FakeChunk()])
+
+    assert result["id"] is None
+    assert result["model"] is None

@@ -72,6 +72,13 @@ def accumulate_streaming_response(
         if extracted_tool_calls:
             tool_calls.extend(extracted_tool_calls)
 
+        # Capture response_id and model_version from the first chunk that
+        # provides them (mirrors the non-streaming path in utils.py).
+        if response_id is None and getattr(chunk, "response_id", None):
+            response_id = chunk.response_id
+        if model is None and getattr(chunk, "model_version", None):
+            model = chunk.model_version
+
         # Use last possible chunk, in case of interruption, and
         # gracefully handle missing intermediate tokens by taking maximum
         # with previous token reporting.
