@@ -54,6 +54,15 @@ def accumulate_streaming_response(
     model = None
 
     for chunk in chunks:
+        # Extract response_id and model_version (use last non-None value)
+        chunk_response_id = getattr(chunk, "response_id", None)
+        if chunk_response_id:
+            response_id = chunk_response_id
+
+        chunk_model_version = getattr(chunk, "model_version", None)
+        if chunk_model_version:
+            model = chunk_model_version
+
         # Extract text and tool calls
         if getattr(chunk, "candidates", None):
             for candidate in getattr(chunk, "candidates", []):
