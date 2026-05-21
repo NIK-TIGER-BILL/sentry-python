@@ -31,6 +31,14 @@ def _create_check_in_event(
     }
 
     if monitor_config:
+        # Normalize interval schedule values to integers so the Sentry API
+        # accepts them even when users pass string values (e.g. "1").
+        schedule = monitor_config.get("schedule")
+        if schedule and schedule.get("type") == "interval":
+            value = schedule.get("value")
+            if isinstance(value, str) and value.isdigit():
+                schedule = {**schedule, "value": int(value)}
+                monitor_config = {**monitor_config, "schedule": schedule}
         check_in["monitor_config"] = monitor_config
 
     return check_in

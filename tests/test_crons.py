@@ -297,6 +297,30 @@ def test_decorator_monitor_config(sentry_init, capture_envelopes):
         }
 
 
+def test_monitor_config_interval_value_coerced_to_int(sentry_init, capture_envelopes):
+    sentry_init()
+    envelopes = capture_envelopes()
+
+    monitor_config = {
+        "schedule": {"type": "interval", "value": "1", "unit": "minute"},
+    }
+
+    capture_checkin(monitor_slug="interval-test", monitor_config=monitor_config)
+    check_in = envelopes[0].items[0].payload.json
+
+    assert check_in["monitor_slug"] == "interval-test"
+    assert check_in["monitor_config"]["schedule"]["value"] == 1
+    assert check_in["monitor_config"]["schedule"]["unit"] == "minute"
+
+    # Ensure an already-int value stays untouched.
+    monitor_config_int = {
+        "schedule": {"type": "interval", "value": 5, "unit": "hour"},
+    }
+    capture_checkin(monitor_slug="interval-test-int", monitor_config=monitor_config_int)
+    check_in2 = envelopes[1].items[0].payload.json
+    assert check_in2["monitor_config"]["schedule"]["value"] == 5
+
+
 def test_decorator_no_monitor_config(sentry_init, capture_envelopes):
     sentry_init()
     envelopes = capture_envelopes()
